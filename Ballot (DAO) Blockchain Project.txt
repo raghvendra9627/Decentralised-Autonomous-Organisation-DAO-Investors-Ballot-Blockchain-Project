@@ -1,0 +1,116 @@
+// SPDX-License-Identifier: GPL-3.0
+
+pragma solidity >=0.8.2 <0.9.0;
+
+contract Ballot{
+    struct Proposal{
+        uint id;
+        string description;
+        uint amount;
+        address payable receipient;
+        uint votes;
+        uint end;
+        bool isExecuted;
+    }
+
+    mapping (address=>bool)private isInvestor;
+    mapping (address=>uint)public numOfShares;
+    mapping (address=>mapping (uint=>bool))public isVoted;
+    address[] public investorsList;
+    mapping (uint =>Proposal) public proposals;
+
+    uint public totalShares;
+    uint public availableFunds;
+    uint public contributionTimeEnd;
+    uint public nextProposalId;
+    uint public voteTime;
+    uint public quorum;
+    address public manager;
+
+    constructor(uint _contributionTimeEnd, uint _voteTime, uint _quorum) {
+        require(_quorum>0 && _quorum<100,"Invalid Quorum Values");
+        contributionTimeEnd = block.timestamp+_contributionTimeEnd;
+        voteTime = _voteTime;
+        quorum = _quorum;
+        manager = msg.sender;
+    }
+
+    modifier onlyInvestor(){
+        require(isInvestor[msg.sender]== true,"you are not a investor");
+        _;
+    }
+    
+    modifier onlyManager(){
+        require(manager == msg.sender,"you are not a manager");
+        _;
+    }
+
+    function contribution()public payable {
+        require(contributionTimeEnd>=block.timestamp, "Contribution time ended");
+        require(msg.value>0, "Send More than 0 Ether");
+        isInvestor[msg.sender]=true;
+        numOfShares[msg.sender] = numOfShares[msg.sender]+msg.value;
+        totalShares+=msg.value;
+        availableFunds+=msg.value;
+        investorsList.push(msg.sender);
+    }
+
+    function redeemShare(uint amount)public onlyInvestor(){
+        require(numOfShares[msg.sender]>=amount, "Don't have enough Shares");
+        require(availableFunds>=amount, "Not enough Funds");
+        numOfShares[msg.sender] -=amount;
+        if(numOfShares[msg.sender]==0){
+            isInvestor[msg.sender]=false;
+        }
+        availableFunds-=amount;
+        payable(msg.sender).transfer(amount);
+    }
+
+    function transferShare(uint amount,address to) public onlyInvestor(){
+        require(availableFunds>=amount,"Not enough funds");
+        require(numOfShares[msg.sender]>=amount,"not enough Shares");
+        numOfShares[msg.sender]-=amount;
+        if(numOfShares[msg.sender]==0){
+            isInvestor[msg.sender]=false;
+        }
+        numOfShares[to] += amount;
+        isInvestor[to] = true;
+        investorsList.push(to);
+    }
+
+    function createProposal(string calldata description,uint amount,address payable receipient)public onlyManager(){
+        require(availableFunds>=amount,"not enough funds");
+        proposals[nextProposalId] = Proposal(nextProposalId,description,amount,receipient,0,
+                                               block.timestamp+voteTime,false);
+        nextProposalId++;
+    }
+
+    function voteProposal(uint proposalId)public onlyInvestor(){
+        Proposal storage proposal = proposals[proposalId];
+        require(isVoted[msg.sender][proposalId]== false,"Already Voted");
+        require(proposal.end>=block.timestamp,"Voting Time Ended");
+        require(proposal.isExecuted == false,"Already Executed");
+        isVoted[msg.sender][proposalId] = true;
+        proposal.votes+=numOfShares[msg.sender];
+    }
+
+    function executeProposal(uint proposalId)public onlyManager(){
+        Proposal storage proposal = proposals[proposalId];
+        require((proposal.votes*100)/totalShares>=quorum,"Mojority Doesn't Support");
+        proposal.isExecuted = true;
+        availableFunds-=proposal.amount;
+        _transfer(proposal.amount,proposal.receipient);
+    }
+
+    function _transfer(uint amount, address payable receipient)private{
+        receipient.transfer(amount);
+    }
+
+    function proposalList()public view returns(Proposal [] memory){
+        Proposal[] memory arr = new Proposal[](nextProposalId-1);
+        for(uint i = 0;i<nextProposalId;i++){
+            arr[i] = proposals[i];
+        }
+        return arr;
+    }
+}
